@@ -422,4 +422,4 @@ app.post('/api/alerts', auth, (req,res)=>{ const alert={ id:uuid(), userId:req.u
 app.post('/api/journal', auth, (req,res)=>{ const j={ id:uuid(), userId:req.user.id, text:req.body.text, createdAt:new Date().toISOString() }; db.journals.push(j); res.json(j); });
 app.use(express.static(frontendDist));
 app.get('*', (req,res)=>res.sendFile(path.join(frontendDist, 'index.html')));
-app.listen(PORT, ()=>console.log(`MindCare AI backend running on http://localhost:${PORT}`));
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));

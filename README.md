@@ -1,4 +1,4 @@
-# MindCare AI Final Project
+﻿# MindCare AI Final Project
 
 MindCare AI is an online therapist-style mental wellness platform with:
 - Login/Register

@@ -11,3 +11,4 @@ localtunnel.*.log
 serveo*.log
 localhostrun*.log
 cloudflared.exe
+.vercel

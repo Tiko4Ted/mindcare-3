@@ -18,7 +18,7 @@ function App(){
   const [messengerEntry,setMessengerEntry]=useState(null);
   useEffect(()=>{ if(token) axios.get(API+'/me',{headers:authHeaders()}).then(r=>setUser(r.data.user)).catch(()=>logout()); },[token]);
   function logout(){ localStorage.clear(); setToken(null); setUser(null); }
-  if(!token) return <Auth onAuth={(t,u)=>{localStorage.setItem('token',t); setToken(t); setUser(u)}}/>;
+  if(!token) return <Auth onAuth={(t,u)=>{localStorage.setItem('token',t); setToken(t); setUser(u); setPage('home'); setNavOpen(false)}}/>;
   const nav=[['home','Home'],['chat','MindCare Messenger'],['voice','Voice AI'],['media','AI Video Call'],['fusion','Fusion'],['calm','Calm Space'],['games','Mood Games'],['therapists','Therapist Portal'],['profile','Profile']];
   const messengerNav=[['friend','Friend Connect'],['agent','AI Agent'],['therapist','Therapist Connect'],['groups','MindCare Groups'],['calls','MindCare Calls'],['status','MindCare Status']];
   function openMessenger(mode='friend'){setMessengerEntry(mode); setPage('chat'); setNavOpen(false)}

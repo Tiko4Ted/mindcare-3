@@ -17,6 +17,7 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
 const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-5.4-mini';
 const HAS_OPENAI_KEY = OPENAI_API_KEY && !OPENAI_API_KEY.startsWith('your_');
 const FIREBASE_API_KEY = process.env.FIREBASE_API_KEY || '';
+const IS_VERCEL = process.env.VERCEL === '1';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const frontendDist = path.resolve(__dirname, '../../frontend/dist');
@@ -420,6 +421,10 @@ app.delete('/api/therapists/:id', auth, (req,res)=>{ const i=therapists.findInde
 app.post('/api/appointments', auth, (req,res)=>{ const appt={ id:uuid(), userId:req.user.id, status:'pending', ...req.body, createdAt:new Date().toISOString() }; db.appointments.push(appt); res.json(appt); });
 app.post('/api/alerts', auth, (req,res)=>{ const alert={ id:uuid(), userId:req.user.id, ...req.body, createdAt:new Date().toISOString() }; db.alerts.push(alert); res.json({ sent:true, alert }); });
 app.post('/api/journal', auth, (req,res)=>{ const j={ id:uuid(), userId:req.user.id, text:req.body.text, createdAt:new Date().toISOString() }; db.journals.push(j); res.json(j); });
-app.use(express.static(frontendDist));
-app.get('*', (req,res)=>res.sendFile(path.join(frontendDist, 'index.html')));
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+if (!IS_VERCEL) {
+  app.use(express.static(frontendDist));
+  app.get('*', (req,res)=>res.sendFile(path.join(frontendDist, 'index.html')));
+  app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+}
+
+export default app;

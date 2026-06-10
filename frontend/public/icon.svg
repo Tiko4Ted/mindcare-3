@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">MindCare app icon</title>
+  <desc id="desc">Blue MindCare icon with a heart and calm wave.</desc>
+  <rect width="512" height="512" rx="112" fill="#0b76f6"/>
+  <circle cx="256" cy="256" r="178" fill="#eaf3ff"/>
+  <path d="M256 354c-18-24-47-44-75-67-30-25-47-51-47-82 0-35 27-62 62-62 25 0 47 14 60 36 13-22 35-36 60-36 35 0 62 27 62 62 0 31-17 57-47 82-28 23-57 43-75 67z" fill="#0f766e"/>
+  <path d="M155 332c48 30 108 38 164 22 29-8 55-22 77-41" fill="none" stroke="#0b76f6" stroke-width="28" stroke-linecap="round"/>
+  <path d="M170 389c49 24 105 30 158 17" fill="none" stroke="#62d8b6" stroke-width="24" stroke-linecap="round"/>
+</svg>

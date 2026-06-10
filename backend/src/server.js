@@ -17,6 +17,9 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
 const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-5.4-mini';
 const HAS_OPENAI_KEY = OPENAI_API_KEY && !OPENAI_API_KEY.startsWith('your_');
 const FIREBASE_API_KEY = process.env.FIREBASE_API_KEY || '';
+const SUPABASE_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '';
+const SUPABASE_KEY = process.env.SUPABASE_PUBLISHABLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_PUBLISHABLE_KEY || process.env.VITE_SUPABASE_ANON_KEY || '';
+const HAS_SUPABASE = !!(SUPABASE_URL && SUPABASE_KEY && SUPABASE_URL.includes('supabase.co'));
 const IS_VERCEL = process.env.VERCEL === '1';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -35,6 +38,77 @@ const therapists = [
 ];
 
 function publicChatId() { return 'MC-' + Math.random().toString(36).slice(2, 8).toUpperCase(); }
+function fromSupabaseUser(row) {
+  if (!row) return null;
+  return { id: row.id, firebaseId: row.firebase_id || null, firebaseToken: null, publicChatId: row.public_chat_id, name: row.name, email: row.email, passwordHash: row.password_hash, role: row.role || 'user' };
+}
+function toSupabaseMessage(row) {
+  return { id:row.id, mode:row.mode, fromId:row.from_id, fromChatId:row.from_chat_id, fromName:row.from_name, toId:row.to_id, toChatId:row.to_chat_id, text:row.text || '', attachment:row.attachment || null, createdAt:row.created_at };
+}
+let supabaseUnavailableLogged = false;
+async function supabaseRequest(table, { method = 'GET', query = '', body = null, prefer = '' } = {}) {
+  if (!HAS_SUPABASE) return null;
+  const url = `${SUPABASE_URL.replace(/\/$/, '')}/rest/v1/${table}${query}`;
+  const headers = { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` };
+  if (body) headers['Content-Type'] = 'application/json';
+  if (prefer) headers.Prefer = prefer;
+  const response = await fetch(url, { method, headers, body: body ? JSON.stringify(body) : undefined });
+  const text = await response.text();
+  const data = text ? JSON.parse(text) : null;
+  if (!response.ok) {
+    if (!supabaseUnavailableLogged) {
+      console.error('Supabase request failed:', response.status, data?.message || text);
+      supabaseUnavailableLogged = true;
+    }
+    throw new Error(data?.message || `Supabase request failed: ${response.status}`);
+  }
+  return data;
+}
+async function findPersistedUserByEmail(email) {
+  if (HAS_SUPABASE) {
+    try {
+      const rows = await supabaseRequest('mindcare_users', { query: `?email=eq.${encodeURIComponent(email)}&limit=1` });
+      return fromSupabaseUser(rows?.[0]);
+    } catch {}
+  }
+  return db.users.find(u => u.email === email) || null;
+}
+async function findPersistedUserById(id) {
+  if (HAS_SUPABASE) {
+    try {
+      const rows = await supabaseRequest('mindcare_users', { query: `?id=eq.${encodeURIComponent(id)}&limit=1` });
+      return fromSupabaseUser(rows?.[0]);
+    } catch {}
+  }
+  return db.users.find(u => u.id === id) || null;
+}
+async function findPersistedUserByChatId(chatId = '') {
+  const normalized = String(chatId).trim().toUpperCase();
+  if (HAS_SUPABASE) {
+    try {
+      const query = `?or=(public_chat_id.eq.${encodeURIComponent(normalized)},email.eq.${encodeURIComponent(normalized.toLowerCase())})&limit=1`;
+      const rows = await supabaseRequest('mindcare_users', { query });
+      return fromSupabaseUser(rows?.[0]);
+    } catch {}
+  }
+  return db.users.find(u => ensurePublicChatId(u) === normalized || u.email.toLowerCase() === normalized.toLowerCase()) || null;
+}
+async function savePersistedUser(user) {
+  if (HAS_SUPABASE) {
+    try {
+      const rows = await supabaseRequest('mindcare_users', {
+        method: 'POST',
+        prefer: 'return=representation',
+        body: { id:user.id, firebase_id:user.firebaseId, public_chat_id:user.publicChatId, name:user.name, email:user.email, password_hash:user.passwordHash, role:user.role }
+      });
+      return fromSupabaseUser(rows?.[0]) || user;
+    } catch {}
+  }
+  db.users.push(user);
+  db.chats[user.id] = [];
+  db.settings[user.id] = { theme:'light', language:'English', notifications:true, consentText:true, consentVoice:true, consentMedia:true, emergencyContact:'', preferredTherapist:'' };
+  return user;
+}
 function ensurePublicChatId(user) {
   if (!user.publicChatId) {
     let id;
@@ -301,7 +375,7 @@ app.get('/api/health', (req,res)=>res.json({ ok:true, name:'MindCare AI API', fi
 app.post('/api/auth/register', async (req,res)=>{
   const { name, email, password, role='user' } = req.body;
   if (!name || !email || !password) return res.status(400).json({ error:'Name, email and password are required' });
-  if (db.users.find(u=>u.email===email)) return res.status(409).json({ error:'Email already exists' });
+  if (await findPersistedUserByEmail(email)) return res.status(409).json({ error:'Email already exists' });
   let firebaseUser = null;
   try {
     if (firebaseEnabled()) firebaseUser = await firebaseAuth('register', email, password);
@@ -309,18 +383,18 @@ app.post('/api/auth/register', async (req,res)=>{
     return res.status(e.status || 401).json({ error:e.message });
   }
   const user = { id: firebaseUser?.localId || uuid(), firebaseId: firebaseUser?.localId || null, firebaseToken: firebaseUser?.idToken || null, publicChatId: publicChatId(), name, email, passwordHash: await bcrypt.hash(password, 10), role };
-  db.users.push(user); db.chats[user.id] = []; db.settings[user.id] = { theme:'light', language:'English', notifications:true, consentText:true, consentVoice:true, consentMedia:true, emergencyContact:'', preferredTherapist:'' };
-  res.json({ token: tokenFor(user), user: publicUser(user) });
+  const saved = await savePersistedUser(user);
+  res.json({ token: tokenFor(saved), user: publicUser(saved) });
 });
 app.post('/api/auth/login', async (req,res)=>{
   const { email, password } = req.body;
-  let user = db.users.find(u=>u.email===email);
+  let user = await findPersistedUserByEmail(email);
   if (firebaseEnabled()) {
     try {
       const firebaseUser = await firebaseAuth('login', email, password);
       if (!user) {
         user = { id: firebaseUser.localId, firebaseId: firebaseUser.localId, firebaseToken: firebaseUser.idToken, publicChatId: publicChatId(), name: email.split('@')[0], email, passwordHash: await bcrypt.hash(password, 10), role:'user' };
-        db.users.push(user); db.chats[user.id] = []; db.settings[user.id] = { theme:'light', language:'English', notifications:true, consentText:true, consentVoice:true, consentMedia:true, emergencyContact:'', preferredTherapist:'' };
+        user = await savePersistedUser(user);
       } else {
         user.firebaseId = firebaseUser.localId;
         user.firebaseToken = firebaseUser.idToken;
@@ -333,7 +407,11 @@ app.post('/api/auth/login', async (req,res)=>{
   }
   res.json({ token: tokenFor(user), user: publicUser(user) });
 });
-app.get('/api/me', auth, (req,res)=>{ const u=db.users.find(x=>x.id===req.user.id); res.json({ user:publicUser(u), settings: db.settings[u.id] }); });
+app.get('/api/me', auth, async (req,res)=>{
+  const u = await findPersistedUserById(req.user.id);
+  if (!u) return res.status(404).json({ error:'User not found' });
+  res.json({ user:publicUser(u), settings: db.settings[u.id] || { theme:'light', language:'English', notifications:true, consentText:true, consentVoice:true, consentMedia:true, emergencyContact:'', preferredTherapist:'' } });
+});
 app.put('/api/settings', auth, (req,res)=>{ db.settings[req.user.id] = { ...(db.settings[req.user.id]||{}), ...req.body }; res.json(db.settings[req.user.id]); });
 app.get('/api/chat/history', auth, (req,res)=> res.json(db.chats[req.user.id] || []));
 app.post('/api/chat/message', auth, async (req,res)=>{
@@ -351,35 +429,73 @@ app.post('/api/chat/message', auth, async (req,res)=>{
 function directChatKey(a, b, mode) {
   return [a, b].sort().join(':') + ':' + mode;
 }
+async function getPersistedConversation(a, b, mode) {
+  const key = directChatKey(a, b, mode);
+  if (HAS_SUPABASE) {
+    try {
+      const rows = await supabaseRequest('mindcare_direct_messages', { query: `?conversation_key=eq.${encodeURIComponent(key)}&order=created_at.asc` });
+      return rows.map(toSupabaseMessage);
+    } catch {}
+  }
+  return db.directChats[key] || [];
+}
+async function savePersistedDirectMessage(key, msg) {
+  if (HAS_SUPABASE) {
+    try {
+      const rows = await supabaseRequest('mindcare_direct_messages', {
+        method: 'POST',
+        prefer: 'return=representation',
+        body: {
+          id: msg.id,
+          conversation_key: key,
+          mode: msg.mode,
+          from_id: msg.fromId,
+          from_chat_id: msg.fromChatId,
+          from_name: msg.fromName,
+          to_id: msg.toId,
+          to_chat_id: msg.toChatId,
+          text: msg.text,
+          attachment: msg.attachment
+        }
+      });
+      return toSupabaseMessage(rows?.[0]) || msg;
+    } catch {}
+  }
+  db.directChats[key] = [...(db.directChats[key] || []), msg];
+  return msg;
+}
 function findUserByChatId(chatId = '') {
   const normalized = String(chatId).trim().toUpperCase();
   return db.users.find(u => ensurePublicChatId(u) === normalized || u.email.toLowerCase() === normalized.toLowerCase());
 }
-app.get('/api/direct/me', auth, (req,res)=>{
-  const user = db.users.find(u => u.id === req.user.id);
+app.get('/api/direct/me', auth, async (req,res)=>{
+  const user = await findPersistedUserById(req.user.id);
+  if (!user) return res.status(404).json({ error:'User not found' });
   res.json(publicUser(user));
 });
-app.get('/api/direct/conversation/:mode/:chatId', auth, (req,res)=>{
+app.get('/api/direct/conversation/:mode/:chatId', auth, async (req,res)=>{
   const mode = ['friend','therapist'].includes(req.params.mode) ? req.params.mode : 'friend';
-  const other = findUserByChatId(req.params.chatId);
+  const other = await findPersistedUserByChatId(req.params.chatId);
   if (!other) return res.status(404).json({ error:'No user found with that MindCare ID or email' });
   if (other.id === req.user.id) return res.status(400).json({ error:'Use another user account to start a direct chat' });
-  const key = directChatKey(req.user.id, other.id, mode);
-  res.json({ mode, participant: publicUser(other), messages: db.directChats[key] || [] });
+  const messages = await getPersistedConversation(req.user.id, other.id, mode);
+  res.json({ mode, participant: publicUser(other), messages });
 });
-app.post('/api/direct/message', auth, (req,res)=>{
+app.post('/api/direct/message', auth, async (req,res)=>{
   const { toChatId, message, mode='friend', attachment=null } = req.body;
   const clean = String(message || '').trim();
   const safeMode = ['friend','therapist'].includes(mode) ? mode : 'friend';
   if (!toChatId || (!clean && !attachment)) return res.status(400).json({ error:'Recipient ID and message or attachment are required' });
-  const from = db.users.find(u => u.id === req.user.id);
-  const to = findUserByChatId(toChatId);
+  const from = await findPersistedUserById(req.user.id);
+  const to = await findPersistedUserByChatId(toChatId);
+  if (!from) return res.status(404).json({ error:'User not found' });
   if (!to) return res.status(404).json({ error:'No user found with that MindCare ID or email' });
   if (to.id === from.id) return res.status(400).json({ error:'Use another user account to start a direct chat' });
   const key = directChatKey(from.id, to.id, safeMode);
   const msg = { id:uuid(), mode:safeMode, fromId:from.id, fromChatId:ensurePublicChatId(from), fromName:from.name, toId:to.id, toChatId:ensurePublicChatId(to), text:clean, attachment, createdAt:new Date().toISOString() };
-  db.directChats[key] = [...(db.directChats[key] || []), msg];
-  res.json({ sent:true, message:msg, conversation:db.directChats[key], participant:publicUser(to) });
+  await savePersistedDirectMessage(key, msg);
+  const conversation = await getPersistedConversation(from.id, to.id, safeMode);
+  res.json({ sent:true, message:msg, conversation, participant:publicUser(to) });
 });
 app.post('/api/calls/signal', auth, (req,res)=>{
   const { toChatId, type, payload={}, callType='voice' } = req.body;

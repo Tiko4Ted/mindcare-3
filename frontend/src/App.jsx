@@ -1,10 +1,16 @@
 ﻿import React, {useEffect, useMemo, useRef, useState} from 'react';
 import { createRoot } from 'react-dom/client';
 import axios from 'axios';
+import { createClient } from '@supabase/supabase-js';
 import './style.css';
 
 const API=import.meta.env.VITE_API_URL || (window.location.hostname === 'localhost' ? 'http://localhost:5000/api' : '/api');
+const SUPABASE_URL=import.meta.env.VITE_SUPABASE_URL;
+const SUPABASE_KEY=import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || import.meta.env.VITE_SUPABASE_ANON_KEY;
+const supabase=SUPABASE_URL&&SUPABASE_KEY?createClient(SUPABASE_URL,SUPABASE_KEY):null;
 function authHeaders(){ const t=localStorage.getItem('token'); return {Authorization:`Bearer ${t}`}; }
+function directChatKey(a,b,mode){return [a,b].sort().join(':')+':'+mode}
+function rowToDirectMessage(row){return {id:row.id,mode:row.mode,fromId:row.from_id,fromChatId:row.from_chat_id,fromName:row.from_name,toId:row.to_id,toChatId:row.to_chat_id,text:row.text||'',attachment:row.attachment||null,createdAt:row.created_at}}
 function Card({title,children}){return <section className="card"><h2>{title}</h2>{children}</section>}
 const calmPresets=[
   ['rain','Rain'],['fireplace','Fireplace'],['ocean','Ocean waves'],['forest','Forest birds'],['wind','Soft wind'],['river','River flow'],['night','Night crickets'],['cafe','Quiet cafe'],['brown','Brown noise'],['pink','Pink noise'],['white','White noise'],['bells','Temple bells'],['piano','Soft piano'],['flute','Breathing flute'],['heartbeat','Slow heartbeat'],['garden','Morning garden']
@@ -36,8 +42,9 @@ function Messenger({user,initialActive,clearInitial}){
   useEffect(()=>{ if(initialActive){setActive(initialActive); clearInitial?.()} },[initialActive]);
   useEffect(()=>{axios.get(API+'/chat/history',{headers:authHeaders()}).then(r=>setMessages(r.data))},[]);
   useEffect(()=>{box.current?.scrollTo(0,box.current.scrollHeight)},[messages,directMessages,active,typing]);
-  useEffect(()=>{ if(!directMode||!toChatId.trim())return; let alive=true; async function load(){try{const r=await axios.get(API+'/direct/conversation/'+active+'/'+encodeURIComponent(toChatId.trim()),{headers:authHeaders()}); if(alive){setDirectMessages(r.data.messages); setParticipant(r.data.participant); setErr('')}}catch(e){if(alive){setErr(e.response?.data?.error||'Could not open chat')}}} load(); const timer=setInterval(load,1200); return()=>{alive=false; clearInterval(timer)} },[active,toChatId,directMode]);
-  useEffect(()=>{let alive=true; const timer=setInterval(async()=>{try{const r=await axios.get(API+'/calls/signals',{headers:authHeaders()}); if(!alive)return; for(const s of r.data) await handleSignal(s);}catch{}},1100); return()=>{alive=false; clearInterval(timer)}},[toChatId,active,call.status]);
+  useEffect(()=>{ if(!directMode||!toChatId.trim())return; let alive=true; async function load(){try{const r=await axios.get(API+'/direct/conversation/'+active+'/'+encodeURIComponent(toChatId.trim()),{headers:authHeaders()}); if(alive){setDirectMessages(r.data.messages); setParticipant(r.data.participant); setErr('')}}catch(e){if(alive){setErr(e.response?.data?.error||'Could not open chat')}}} load(); const timer=setInterval(load,4000); return()=>{alive=false; clearInterval(timer)} },[active,toChatId,directMode]);
+  useEffect(()=>{ if(!supabase||!directMode||!user?.id||!participant?.id)return; const key=directChatKey(user.id,participant.id,active); const channel=supabase.channel('direct-'+key).on('postgres_changes',{event:'INSERT',schema:'public',table:'mindcare_direct_messages',filter:'conversation_key=eq.'+key},payload=>{const msg=rowToDirectMessage(payload.new); setDirectMessages(m=>m.some(x=>x.id===msg.id)?m:[...m,msg])}).subscribe(); return()=>{supabase.removeChannel(channel)} },[active,directMode,user?.id,participant?.id]);
+  useEffect(()=>{let alive=true; const timer=setInterval(async()=>{try{const r=await axios.get(API+'/calls/signals',{headers:authHeaders()}); if(!alive)return; for(const s of r.data) await handleSignal(s);}catch{}},2500); return()=>{alive=false; clearInterval(timer)}},[toChatId,active,call.status]);
   async function sendSignal(to,type,payload={},callType=call.type){await axios.post(API+'/calls/signal',{toChatId:to,type,payload,callType},{headers:authHeaders()})}
   async function makePeer(target,type){const pc=new RTCPeerConnection({iceServers:[{urls:'stun:stun.l.google.com:19302'}]}); pc.onicecandidate=e=>{if(e.candidate)sendSignal(target,'ice',e.candidate,type)}; pc.ontrack=e=>{if(remoteVideoRef.current)remoteVideoRef.current.srcObject=e.streams[0]}; const stream=await navigator.mediaDevices.getUserMedia({audio:true,video:type==='video'}); localStreamRef.current=stream; if(localVideoRef.current)localVideoRef.current.srcObject=stream; stream.getTracks().forEach(t=>pc.addTrack(t,stream)); pcRef.current=pc; return pc}
   async function startCall(type){const target=(participant?.chatId||toChatId).trim(); if(!target)return setErr('Enter a MindCare ID first'); try{setCall({status:'calling',type,muted:false,target}); const pc=await makePeer(target,type); const offer=await pc.createOffer(); await pc.setLocalDescription(offer); await sendSignal(target,'offer',offer,type)}catch(e){setErr('Could not start call. Allow microphone/camera permissions.'); endCall(false)}}

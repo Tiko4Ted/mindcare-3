@@ -15,20 +15,34 @@ function Card({title,children}){return <section className="card"><h2>{title}</h2
 const calmPresets=[
   ['rain','Rain'],['fireplace','Fireplace'],['ocean','Ocean waves'],['forest','Forest birds'],['wind','Soft wind'],['river','River flow'],['night','Night crickets'],['cafe','Quiet cafe'],['brown','Brown noise'],['pink','Pink noise'],['white','White noise'],['bells','Temple bells'],['piano','Soft piano'],['flute','Breathing flute'],['heartbeat','Slow heartbeat'],['garden','Morning garden']
 ];
+const appPages=['home','chat','voice','media','fusion','calm','games','therapists','profile'];
+function routeFromLocation(){
+  const raw=(window.location.hash||'#home').replace(/^#/,'');
+  const [page,mode]=raw.split('/');
+  const safePage=appPages.includes(page)?page:'home';
+  return {page:safePage,mode:safePage==='chat'?(mode||null):null};
+}
+function routeHash(page,mode){
+  return '#'+page+(page==='chat'&&mode?'/'+mode:'');
+}
 
 function App(){
   const [token,setToken]=useState(localStorage.getItem('token'));
   const [user,setUser]=useState(null);
-  const [page,setPage]=useState('home');
+  const [page,setPage]=useState(()=>routeFromLocation().page);
   const [navOpen,setNavOpen]=useState(false);
-  const [messengerEntry,setMessengerEntry]=useState(null);
+  const [messengerEntry,setMessengerEntry]=useState(()=>routeFromLocation().mode);
+  const [navDepth,setNavDepth]=useState(()=>window.history.state?.mindcareIndex || 0);
   useEffect(()=>{ if(token) axios.get(API+'/me',{headers:authHeaders()}).then(r=>setUser(r.data.user)).catch(()=>logout()); },[token]);
-  function logout(){ localStorage.clear(); setToken(null); setUser(null); }
-  if(!token) return <Auth onAuth={(t,u)=>{localStorage.setItem('token',t); setToken(t); setUser(u); setPage('home'); setNavOpen(false)}}/>;
+  useEffect(()=>{ if(!window.location.hash) window.history.replaceState({mindcare:true,mindcareIndex:0,page:'home',mode:null},'',routeHash('home')); function syncRoute(){const route=routeFromLocation(); setPage(route.page); setMessengerEntry(route.mode); setNavOpen(false); setNavDepth(window.history.state?.mindcareIndex || 0)} window.addEventListener('popstate',syncRoute); window.addEventListener('hashchange',syncRoute); return()=>{window.removeEventListener('popstate',syncRoute); window.removeEventListener('hashchange',syncRoute)} },[]);
+  function navigate(nextPage,mode=null,options={}){const safePage=appPages.includes(nextPage)?nextPage:'home'; const safeMode=safePage==='chat'?mode:null; setPage(safePage); setMessengerEntry(safeMode); setNavOpen(false); const nextHash=routeHash(safePage,safeMode); const nextIndex=options.replace?(window.history.state?.mindcareIndex || 0):(window.history.state?.mindcareIndex || 0)+1; const state={mindcare:true,mindcareIndex:nextIndex,page:safePage,mode:safeMode}; if(window.location.hash!==nextHash){options.replace?window.history.replaceState(state,'',nextHash):window.history.pushState(state,'',nextHash)} else {window.history.replaceState(state,'',nextHash)} setNavDepth(nextIndex)}
+  function goBack(){ if(page==='home')return; if(navDepth>0) window.history.back(); else navigate('home',null,{replace:true}) }
+  function logout(){ localStorage.clear(); setToken(null); setUser(null); navigate('home',null,{replace:true}); }
+  if(!token) return <Auth onAuth={(t,u)=>{localStorage.setItem('token',t); setToken(t); setUser(u); navigate('home',null,{replace:true})}}/>;
   const nav=[['home','Home'],['chat','MindCare Messenger'],['voice','Voice AI'],['media','AI Video Call'],['fusion','Fusion'],['calm','Calm Space'],['games','Mood Games'],['therapists','Therapist Portal'],['profile','Profile']];
   const messengerNav=[['friend','Friend Connect'],['agent','AI Agent'],['therapist','Therapist Connect'],['groups','MindCare Groups'],['calls','MindCare Calls'],['status','MindCare Status']];
-  function openMessenger(mode='friend'){setMessengerEntry(mode); setPage('chat'); setNavOpen(false)}
-  return <div className={'app blueApp '+(navOpen?'navOpen':'')}><button className="navTriangle" onClick={()=>setNavOpen(v=>!v)} aria-label="Open navigation">?</button>{navOpen&&<button className="navShade" onClick={()=>setNavOpen(false)} aria-label="Close navigation"></button>}<aside><h1>MindCare</h1><p className="tag">Digital mental wellness ecosystem</p>{nav.map(([id,label])=>id==='chat'?<div className="navGroup" key={id}><button className={page===id?'active':''} onClick={()=>openMessenger('friend')}>{label}</button><div className="navSub">{messengerNav.map(([mode,text])=><button key={mode} className={page==='chat'&&messengerEntry===mode?'subActive':''} onClick={()=>openMessenger(mode)}>{text}</button>)}</div></div>:<button className={page===id?'active':''} onClick={()=>{setMessengerEntry(null); setPage(id);setNavOpen(false)}} key={id}>{label}</button>)}<button onClick={logout}>Logout</button></aside><main><header><b>MindCare</b><span>Hello {user?.name} • Private • Secure • Supportive</span></header>{page==='home'&&<Dashboard setPage={setPage} openMessenger={openMessenger}/>} {page==='chat'&&<Messenger user={user} initialActive={messengerEntry} clearInitial={()=>setMessengerEntry(null)}/>} {page==='voice'&&<Voice/>}{page==='media'&&<VideoAI/>}{page==='fusion'&&<Fusion/>}{page==='calm'&&<Calm/>}{page==='games'&&<Games/>}{page==='therapists'&&<Therapists/>}{page==='profile'&&<Profile user={user} setUser={setUser}/>}</main></div>
+  function openMessenger(mode='friend'){navigate('chat',mode)}
+  return <div className={'app blueApp '+(navOpen?'navOpen':'')}><button className="navTriangle" onClick={()=>setNavOpen(v=>!v)} aria-label="Open navigation">?</button>{navOpen&&<button className="navShade" onClick={()=>setNavOpen(false)} aria-label="Close navigation"></button>}<aside><h1>MindCare</h1><p className="tag">Digital mental wellness ecosystem</p>{nav.map(([id,label])=>id==='chat'?<div className="navGroup" key={id}><button className={page===id?'active':''} onClick={()=>openMessenger('friend')}>{label}</button><div className="navSub">{messengerNav.map(([mode,text])=><button key={mode} className={page==='chat'&&messengerEntry===mode?'subActive':''} onClick={()=>openMessenger(mode)}>{text}</button>)}</div></div>:<button className={page===id?'active':''} onClick={()=>navigate(id)} key={id}>{label}</button>)}<button onClick={logout}>Logout</button></aside><main><header><div className="topNav">{page!=='home'&&<button className="backButton" onClick={goBack}>Back</button>}<b>MindCare</b></div><span>Hello {user?.name} • Private • Secure • Supportive</span></header>{page==='home'&&<Dashboard setPage={navigate} openMessenger={openMessenger}/>} {page==='chat'&&<Messenger user={user} initialActive={messengerEntry} clearInitial={()=>setMessengerEntry(null)}/>} {page==='voice'&&<Voice/>}{page==='media'&&<VideoAI/>}{page==='fusion'&&<Fusion/>}{page==='calm'&&<Calm/>}{page==='games'&&<Games/>}{page==='therapists'&&<Therapists/>}{page==='profile'&&<Profile user={user} setUser={setUser}/>}</main></div>
 }
 
 function Auth({onAuth}){ const [login,setLogin]=useState(true); const [form,setForm]=useState({name:'',email:'',password:''}); const [err,setErr]=useState(''); async function submit(e){e.preventDefault(); setErr(''); try{const url=login?'/auth/login':'/auth/register'; const r=await axios.post(API+url,form); onAuth(r.data.token,r.data.user)}catch(ex){setErr(ex.response?.data?.error||'Failed')}} return <div className="auth"><div className="authcard"><h1>MindCare</h1><p>Secure mental wellness platform</p><form onSubmit={submit}>{!login&&<input placeholder="Full name" onChange={e=>setForm({...form,name:e.target.value})}/>}<input placeholder="Email" onChange={e=>setForm({...form,email:e.target.value})}/><input placeholder="Password" type="password" onChange={e=>setForm({...form,password:e.target.value})}/>{err&&<p className="err">{err}</p>}<button>{login?'Login':'Create account'}</button></form><a onClick={()=>setLogin(!login)}>{login?'Create new account':'I already have an account'}</a></div></div> }
